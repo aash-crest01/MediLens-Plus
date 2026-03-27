@@ -1,0 +1,5 @@
+{
+  "name": "MediLens — Medical Report Intelligence Dashboard",
+  "description": "An AI-powered dashboard that translates complex medical reports into plain English with visual analytics and doctor visit preparation tools.",
+  "requestFramePermissions": []
+}
