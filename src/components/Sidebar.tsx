@@ -9,23 +9,29 @@ import {
   ShieldCheck,
   Menu,
   X,
-  ClipboardList
+  ClipboardList,
+  History,
+  Pill,
+  Zap
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 interface SidebarProps {
   activeTab: string;
-  setActiveTab: (tab: string) => void;
+  setActiveTab: (tab: any) => void;
   isOpen: boolean;
   setIsOpen: (open: boolean) => void;
+  onLogout: () => void;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, setIsOpen }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, setIsOpen, onLogout }) => {
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'reports', label: 'My Reports', icon: FileText },
     { id: 'insights', label: 'Health Insights', icon: Activity },
-    { id: 'physician', label: 'Physician Brief', icon: Stethoscope },
+    { id: 'history', label: 'Past Reports', icon: History },
+    { id: 'meds', label: 'Medications', icon: Pill },
+    { id: 'physician', label: 'AI Insights', icon: Zap },
     { id: 'care', label: 'Care Plan', icon: ClipboardList },
   ];
 
@@ -73,11 +79,25 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpe
           </nav>
 
           <div className="pt-6 border-t border-slate-100 space-y-2">
-            <button className="w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition-all">
+            <button 
+              onClick={() => {
+                setActiveTab('settings');
+                setIsOpen(false);
+              }}
+              className={cn(
+                "w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all",
+                activeTab === 'settings' 
+                  ? "bg-oxford-blue text-white shadow-lg shadow-oxford-blue/20" 
+                  : "text-slate-400 hover:bg-slate-50 hover:text-slate-600"
+              )}
+            >
               <Settings className="w-5 h-5" />
               <span className="text-sm">Settings</span>
             </button>
-            <button className="w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-red-400 hover:bg-red-50 hover:text-red-600 transition-all">
+            <button 
+              onClick={onLogout}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl font-bold text-red-400 hover:bg-red-50 hover:text-red-600 transition-all"
+            >
               <LogOut className="w-5 h-5" />
               <span className="text-sm">Sign Out</span>
             </button>

@@ -11,7 +11,8 @@ import {
   Pill, CheckSquare, AlertTriangle, AlertCircle, ChevronDown, ChevronUp,
   FileText, Image as ImageIcon, Loader2, Bookmark, BookmarkCheck,
   Languages as LangIcon, RefreshCw, X, Eye, EyeOff, ExternalLink,
-  Search, ClipboardList, HeartPulse, Menu
+  Search, ClipboardList, HeartPulse, Menu, CheckCircle2, LogOut,
+  Gamepad2, Settings as SettingsIcon, User, Bell, Shield, Palette
 } from 'lucide-react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, 
@@ -20,11 +21,18 @@ import {
 } from 'recharts';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from './lib/utils';
-import { extractMedicalData, suggestExtraQuestions, translateContent, type MedicalTerm } from './services/geminiService';
+import { extractMedicalData, suggestExtraQuestions, translateContent, type MedicalTerm, type ExecutiveSummary, type AIInsight } from './services/geminiService';
 import { Sidebar } from './components/Sidebar';
 import { HealthScore } from './components/HealthScore';
 import { WellnessBadges } from './components/WellnessBadges';
 import { InsightCards } from './components/InsightCards';
+import { OrganMap } from './components/OrganMap';
+import { KeyMetrics } from './components/KeyMetrics';
+import { PastReports } from './components/PastReports';
+import { MedicationTracker, type Medication } from './components/MedicationTracker';
+
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { AuthPage } from './components/AuthPage';
 
 // --- Colors ---
 const SEVERITY_COLORS = {
@@ -52,7 +60,7 @@ const CATEGORY_COLORS = {
   Abbreviation: 'bg-slate-50 text-oxford-blue border-slate-100'
 };
 
-const HighlightedTerm = ({ term, text, onToggleExpand, onSetActiveStep, expandedTerms }: { term: MedicalTerm, text: string, onToggleExpand: (t: string) => void, onSetActiveStep: (s: string) => void, expandedTerms: Set<string>, key?: React.Key }) => {
+const HighlightedTerm = ({ term, text, onToggleExpand, onSetActiveStep, expandedTerms }: { term: MedicalTerm, text: string, onToggleExpand: (t: string) => void, onSetActiveStep: (s: any) => void, expandedTerms: Set<string>, key?: React.Key }) => {
   const [position, setPosition] = useState<'center' | 'left' | 'right'>('center');
 
   const handleMouseEnter = (e: React.MouseEvent) => {
@@ -118,21 +126,49 @@ const HighlightedTerm = ({ term, text, onToggleExpand, onSetActiveStep, expanded
   );
 };
 
-export default function App() {
+function MainApp() {
+  const { user, logout } = useAuth();
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [terms, setTerms] = useState<MedicalTerm[]>([]);
   const [originalText, setOriginalText] = useState<string | null>(null);
   const [vitalityIndex, setVitalityIndex] = useState<number>(0);
-  const [executiveSummary, setExecutiveSummary] = useState<string>("");
-  const [physicianBrief, setPhysicianBrief] = useState<string>("");
+  const [executiveSummary, setExecutiveSummary] = useState<ExecutiveSummary | null>(null);
+  const [aiInsights, setAiInsights] = useState<AIInsight | null>(null);
   const [doctorQuestions, setDoctorQuestions] = useState<string[]>([]);
-  const [historicalContextInput, setHistoricalContextInput] = useState<string>("");
-  const [userSymptomsInput, setUserSymptomsInput] = useState<string>("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [processingStep, setProcessingStep] = useState(0);
-  const [activeStep, setActiveStep] = useState<string>('dashboard');
+  const [activeStep, setActiveStep] = useState<'dashboard' | 'insights' | 'summary' | 'physician' | 'care' | 'history' | 'meds' | 'reports' | 'report' | 'settings'>('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [wellnessPoints, setWellnessPoints] = useState(0);
+  const [isGameMode, setIsGameMode] = useState(() => {
+    const saved = localStorage.getItem('medilens_gamemode');
+    return saved === 'true';
+  });
+  const [settingsTab, setSettingsTab] = useState<'general' | 'profile' | 'notifications' | 'security' | 'appearance'>('general');
+  const [notificationSettings, setNotificationSettings] = useState({
+    email: true,
+    push: true,
+    reports: true,
+    medications: true
+  });
+  const [appearanceSettings, setAppearanceSettings] = useState({
+    theme: 'system',
+    accentColor: 'blue',
+    compactMode: false
+  });
+  const [wellnessPoints, setWellnessPoints] = useState(() => {
+    const saved = localStorage.getItem('medilens_xp');
+    return saved ? parseInt(saved) : 0;
+  });
+  const [selectedSystem, setSelectedSystem] = useState<string | null>(null);
+  const [pastReports, setPastReports] = useState<any[]>(() => {
+    const saved = localStorage.getItem('medilens_history');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [medications, setMedications] = useState<any[]>(() => {
+    const saved = localStorage.getItem('medilens_meds');
+    return saved ? JSON.parse(saved) : [];
+  });
   const [userLevel, setUserLevel] = useState(1);
   const [achievements, setAchievements] = useState<Set<string>>(new Set());
   const [expandedTerms, setExpandedTerms] = useState<Set<string>>(new Set());
@@ -145,8 +181,28 @@ export default function App() {
   const [fileName, setFileName] = useState<string | null>(null);
   const [filePreview, setFilePreview] = useState<string | null>(null);
   const [fileType, setFileType] = useState<string | null>(null);
-
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Persistence
+  useEffect(() => {
+    localStorage.setItem('medilens_history', JSON.stringify(pastReports));
+  }, [pastReports]);
+
+  useEffect(() => {
+    localStorage.setItem('medilens_meds', JSON.stringify(medications));
+  }, [medications]);
+
+  useEffect(() => {
+    localStorage.setItem('medilens_xp', wellnessPoints.toString());
+  }, [wellnessPoints]);
+
+  useEffect(() => {
+    localStorage.setItem('medilens_gamemode', isGameMode.toString());
+  }, [isGameMode]);
+
+  const addXp = (amount: number) => {
+    setWellnessPoints(prev => prev + amount);
+  };
 
   const processingSteps = [
     "Reading file...",
@@ -160,12 +216,8 @@ export default function App() {
     setProcessingStep(0);
     setError(null);
     
-    // Simulate steps for UI
-    const stepInterval = setInterval(() => {
-      setProcessingStep(prev => (prev < 2 ? prev + 1 : prev));
-    }, 1500);
-
     try {
+      setProcessingStep(1); // Reading
       const reader = new FileReader();
       const isText = file.type === 'text/plain' || file.type === 'text/csv' || file.name.endsWith('.doc') || file.name.endsWith('.docx');
       
@@ -186,35 +238,51 @@ export default function App() {
         setFilePreview(null);
       }
 
+      setProcessingStep(2); // Analyzing
       const { 
         terms: extractedTerms, 
         fullText, 
         vitality_index, 
         executive_summary, 
-        physician_brief, 
+        ai_insights, 
         doctor_questions 
-      } = await extractMedicalData(fileData, file.type, isText, historicalContextInput, userSymptomsInput);
+      } = await extractMedicalData(fileData, file.type, isText);
       
+      setProcessingStep(3); // Finalizing
       if (extractedTerms.length === 0) {
         setTerms([]);
         setOriginalText(fullText || "No medical terms identified in this document.");
         setVitalityIndex(0);
-        setExecutiveSummary("");
-        setPhysicianBrief("");
+        setExecutiveSummary(null);
+        setAiInsights(null);
         setDoctorQuestions([]);
       } else {
         setTerms(extractedTerms);
         setOriginalText(fullText);
         setVitalityIndex(vitality_index);
         setExecutiveSummary(executive_summary);
-        setPhysicianBrief(physician_brief);
+        setAiInsights(ai_insights);
         setDoctorQuestions(doctor_questions);
         
+        // Add to history
+        const newReport = {
+          id: Date.now().toString(),
+          date: new Date().toISOString(),
+          type: file.type.includes('image') ? "Image Scan" : "Document Analysis",
+          vitalityIndex: vitality_index,
+          summary: executive_summary,
+          aiInsights: ai_insights,
+          terms: extractedTerms,
+          fullText: fullText
+        };
+        setPastReports(prev => [newReport, ...prev]);
+        
         // Gamification: Points for uploading
-        setWellnessPoints(prev => prev + 50);
+        addXp(100);
         const nextAchievements = new Set(achievements);
         nextAchievements.add('Report Pioneer');
         setAchievements(nextAchievements);
+        setActiveStep('summary');
       }
     } catch (err: any) {
       console.error(err);
@@ -226,7 +294,6 @@ export default function App() {
       setTerms([]);
       setOriginalText(null);
     } finally {
-      clearInterval(stepInterval);
       setIsProcessing(false);
     }
   };
@@ -349,7 +416,7 @@ export default function App() {
 
     sortedTerms.forEach(term => {
       const newParts: (string | React.ReactNode)[] = [];
-      parts.forEach(part => {
+      parts.forEach((part, partIndex) => {
         if (typeof part !== 'string') {
           newParts.push(part);
           return;
@@ -362,7 +429,7 @@ export default function App() {
           if (s.toLowerCase() === term.term.toLowerCase()) {
             newParts.push(
               <HighlightedTerm 
-                key={`${term.term}-${i}`}
+                key={`${term.term}-${partIndex}-${i}`}
                 term={term}
                 text={s}
                 onToggleExpand={toggleExpand}
@@ -408,13 +475,13 @@ export default function App() {
     const critical = terms.filter(t => t.severity === 'Critical');
     const concern = terms.filter(t => t.severity === 'Concern');
     const borderline = terms.filter(t => t.severity === 'Borderline');
-    const healthy = terms.filter(t => t.severity === 'Healthy');
+    const normal = terms.filter(t => t.severity === 'Normal');
 
     return {
       critical,
       concern,
       borderline,
-      healthy,
+      normal,
       total: terms.length,
       impact: {
         critical: critical.length > 0 ? `Significant impact from ${critical.length} critical finding${critical.length > 1 ? 's' : ''}` : null,
@@ -482,144 +549,6 @@ export default function App() {
     return Object.entries(counts).map(([name, value]) => ({ name, value }));
   }, [terms]);
 
-  if (terms.length === 0 && !isProcessing) {
-    return (
-      <div className="min-h-screen bg-clinic-calm flex flex-col items-center justify-center p-6 font-sans">
-        <div className="max-w-2xl w-full bg-white rounded-[2rem] shadow-2xl shadow-slate-200/50 p-12 text-center border border-slate-100">
-          <div className="mb-8 flex justify-center">
-            <div className="w-24 h-24 bg-slate-50 rounded-3xl flex items-center justify-center border border-slate-100 shadow-inner">
-              <ShieldCheck className="w-12 h-12 text-oxford-blue" />
-            </div>
-          </div>
-          <h1 className="text-4xl font-black text-oxford-blue mb-4 tracking-tight">MediLens</h1>
-          <p className="text-lg text-slate-500 mb-12 max-w-md mx-auto leading-relaxed">
-            Clinical Decision Support for medical reports. Upload a document to begin your analysis.
-          </p>
-
-          <div className="space-y-6 mb-10 text-left">
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Historical Context (Optional)</label>
-              <textarea 
-                value={historicalContextInput}
-                onChange={(e) => setHistoricalContextInput(e.target.value)}
-                placeholder="e.g., Previous lab data, chronic conditions, or recent medical history..."
-                className="w-full px-6 py-4 rounded-2xl bg-slate-50 border border-slate-100 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-oxford-blue/10 transition-all min-h-[100px] resize-none"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Current Symptoms (Optional)</label>
-              <textarea 
-                value={userSymptomsInput}
-                onChange={(e) => setUserSymptomsInput(e.target.value)}
-                placeholder="e.g., Fatigue, headaches, or specific concerns you want to address..."
-                className="w-full px-6 py-4 rounded-2xl bg-slate-50 border border-slate-100 text-sm font-medium focus:outline-none focus:ring-2 focus:ring-oxford-blue/10 transition-all min-h-[100px] resize-none"
-              />
-            </div>
-          </div>
-          
-          {error && (
-            <div className="mb-8 p-5 bg-red-50 border border-red-100 rounded-2xl flex items-center gap-4 text-red-700 text-sm animate-in fade-in slide-in-from-top-4">
-              <div className="bg-red-100 p-2 rounded-lg">
-                <AlertCircle className="w-5 h-5 shrink-0" />
-              </div>
-              <p className="font-semibold text-left flex-1">{error}</p>
-              <button 
-                onClick={() => setError(null)} 
-                className="p-2 hover:bg-red-100 rounded-lg transition-colors"
-                aria-label="Dismiss error"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-          )}
-          
-          <div 
-            className="border-2 border-dashed border-slate-200 rounded-[1.5rem] p-16 transition-all hover:border-oxford-blue hover:bg-slate-50 cursor-pointer group relative overflow-hidden"
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => {
-              e.preventDefault();
-              const file = e.dataTransfer.files[0];
-              if (file) handleFileUpload(file);
-            }}
-            onClick={() => fileInputRef.current?.click()}
-            role="button"
-            aria-label="Upload medical report"
-            tabIndex={0}
-          >
-            <input 
-              type="file" 
-              ref={fileInputRef} 
-              className="hidden" 
-              accept=".pdf,.png,.jpg,.jpeg,.webp,.csv,.txt,.doc,.docx"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) handleFileUpload(file);
-              }}
-            />
-            <div className="relative z-10">
-              <div className="w-20 h-20 bg-oxford-blue rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-xl group-hover:scale-110 transition-transform duration-500">
-                <Upload className="w-10 h-10 text-white" />
-              </div>
-              <p className="text-xl font-bold text-oxford-blue">Drop your report here</p>
-              <p className="text-sm text-slate-400 mt-3 font-medium">Supports PDF, Images, CSV, Text, and Word docs</p>
-            </div>
-          </div>
-        </div>
-        
-        <footer className="fixed bottom-0 w-full bg-oxford-blue text-white text-center py-3 px-6 text-[10px] font-bold uppercase tracking-[0.2em] z-50 border-t border-white/10 backdrop-blur-md bg-oxford-blue/90">
-          Clinical Decision Support Tool • For Educational Use Only • Consult a Licensed Physician
-        </footer>
-      </div>
-    );
-  }
-
-  if (isProcessing) {
-    return (
-      <div className="min-h-screen bg-clinic-calm flex flex-col items-center justify-center p-6 font-sans">
-        <div className="max-w-md w-full bg-white rounded-[2.5rem] shadow-2xl shadow-slate-200/50 p-12 text-center border border-slate-100">
-          <div className="relative w-32 h-32 mx-auto mb-10">
-            <div className="absolute inset-0 border-4 border-slate-50 rounded-[2rem]"></div>
-            <div 
-              className="absolute inset-0 border-4 border-oxford-blue rounded-[2rem] border-t-transparent animate-spin"
-              style={{ animationDuration: '1.5s' }}
-            ></div>
-            <div className="absolute inset-0 flex items-center justify-center">
-              <HeartPulse className="w-12 h-12 text-oxford-blue animate-pulse" />
-            </div>
-          </div>
-          <h2 className="text-2xl font-black text-oxford-blue mb-3 tracking-tight">{processingSteps[processingStep]}</h2>
-          <p className="text-slate-400 font-medium text-sm mb-8">Advanced clinical analysis in progress...</p>
-          
-          <div className="w-full bg-slate-50 h-3 rounded-full overflow-hidden border border-slate-100 p-0.5">
-            <div 
-              className="bg-oxford-blue h-full rounded-full transition-all duration-700 ease-out shadow-[0_0_10px_rgba(29,45,80,0.3)]"
-              style={{ width: `${((processingStep + 1) / 3) * 100}%` }}
-            ></div>
-          </div>
-          
-          <div className="mt-10 flex flex-col gap-3">
-            {processingSteps.map((step, i) => (
-              <div key={i} className="flex items-center gap-3 text-left">
-                <div className={cn(
-                  "w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold transition-colors",
-                  i <= processingStep ? "bg-oxford-blue text-white" : "bg-slate-100 text-slate-300"
-                )}>
-                  {i < processingStep ? "✓" : i + 1}
-                </div>
-                <span className={cn(
-                  "text-xs font-bold uppercase tracking-widest transition-colors",
-                  i === processingStep ? "text-oxford-blue" : "text-slate-300"
-                )}>
-                  {step}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-clinic-calm pb-20 font-sans text-base">
       {/* Header */}
@@ -642,24 +571,48 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-4">
+            <button 
+              onClick={() => setIsGameMode(!isGameMode)}
+              className={cn(
+                "p-2.5 rounded-xl transition-all border shadow-sm flex items-center gap-2",
+                isGameMode 
+                  ? "bg-amber-400 border-amber-500 text-oxford-blue font-black text-[10px] uppercase tracking-widest" 
+                  : "bg-white border-slate-100 text-slate-400 hover:text-oxford-blue"
+              )}
+              title={isGameMode ? "Disable Game Mode" : "Enable Game Mode"}
+            >
+              <Gamepad2 className={cn("w-5 h-5", isGameMode && "animate-bounce")} />
+              {isGameMode && <span className="hidden sm:inline">Game Mode ON</span>}
+            </button>
+
             <div className="flex items-center gap-3 px-4 py-2 bg-slate-50 rounded-2xl border border-slate-100 shadow-sm">
               <div className="relative">
-                <div className="w-10 h-10 bg-oxford-blue rounded-xl flex items-center justify-center text-white font-black text-sm">
-                  {userLevel}
+                <div className="w-10 h-10 bg-oxford-blue rounded-xl flex items-center justify-center text-white font-black text-sm overflow-hidden">
+                  {user?.photo ? (
+                    <img src={user.photo} alt={user.fullName} className="w-full h-full object-cover" />
+                  ) : (
+                    user?.fullName.charAt(0) || userLevel
+                  )}
                 </div>
-                <motion.div 
-                  key={userLevel}
-                  initial={{ scale: 1.5, opacity: 0 }}
-                  animate={{ scale: 1, opacity: 1 }}
-                  className="absolute -top-2 -right-2 bg-amber-400 text-oxford-blue text-[8px] font-black px-1.5 py-0.5 rounded-full border border-white"
-                >
-                  LVL
-                </motion.div>
+                {!user?.isGuest && (
+                  <motion.div 
+                    key={userLevel}
+                    initial={{ scale: 1.5, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    className="absolute -top-2 -right-2 bg-amber-400 text-oxford-blue text-[8px] font-black px-1.5 py-0.5 rounded-full border border-white"
+                  >
+                    LVL {userLevel}
+                  </motion.div>
+                )}
               </div>
-              <div>
+              <div className="hidden sm:block">
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-black text-oxford-blue uppercase tracking-widest">Health XP</span>
-                  <span className="text-[10px] font-black text-slate-400">{wellnessPoints % 100}/100</span>
+                  <span className="text-[10px] font-black text-oxford-blue uppercase tracking-widest truncate max-w-[80px]">
+                    {user?.fullName || 'Health XP'}
+                  </span>
+                  {user?.isGuest && (
+                    <span className="text-[8px] font-black bg-slate-200 text-slate-500 px-1.5 py-0.5 rounded-md uppercase tracking-tighter">Guest</span>
+                  )}
                 </div>
                 <div className="w-24 h-1.5 bg-slate-200 rounded-full mt-1 overflow-hidden">
                   <motion.div 
@@ -671,23 +624,30 @@ export default function App() {
               </div>
             </div>
 
-            <button 
-              onClick={() => {
-                setTerms([]);
-                setOriginalText(null);
-                setFilePreview(null);
-                setFileName(null);
-                setExpandedTerms(new Set());
-                setSavedTerms(new Set());
-                setCheckedQuestions(new Set());
-                setExtraQuestions([]);
-                setActiveStep('summary');
-              }}
-              className="p-2.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
-              title="Clear Report"
-            >
-              <RefreshCw className="w-5 h-5" />
-            </button>
+            {terms.length > 0 && (
+              <button 
+                onClick={() => {
+                  setTerms([]);
+                  setOriginalText(null);
+                  setFilePreview(null);
+                  setFileName(null);
+                  setFileType(null);
+                  setVitalityIndex(0);
+                  setExecutiveSummary(null);
+                  setAiInsights(null);
+                  setDoctorQuestions([]);
+                  setExpandedTerms(new Set());
+                  setSavedTerms(new Set());
+                  setCheckedQuestions(new Set());
+                  setExtraQuestions([]);
+                  setActiveStep('dashboard');
+                }}
+                className="p-2.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"
+                title="Clear Report"
+              >
+                <RefreshCw className="w-5 h-5" />
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -698,67 +658,353 @@ export default function App() {
           setActiveTab={setActiveStep} 
           isOpen={isSidebarOpen} 
           setIsOpen={setIsSidebarOpen} 
+          onLogout={() => setShowLogoutConfirm(true)}
         />
 
         <main className="flex-1 overflow-y-auto bg-clinic-calm p-4 sm:p-6 lg:p-8">
-          {/* Dashboard View */}
-          {activeStep === 'dashboard' && (
-            <div className="max-w-6xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-              {/* Gamification Banner */}
-              <div className="bg-gradient-to-r from-oxford-blue to-slate-800 rounded-[2.5rem] p-8 text-white shadow-2xl relative overflow-hidden">
-                <div className="absolute top-0 right-0 p-8 opacity-10">
-                  <Award className="w-48 h-48" />
+          {isProcessing ? (
+            <div className="h-full flex flex-col items-center justify-center max-w-2xl mx-auto text-center">
+              <div className="relative w-32 h-32 mb-12">
+                <motion.div 
+                  animate={{ rotate: 360 }}
+                  transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
+                  className="absolute inset-0 border-4 border-slate-100 rounded-[2.5rem]"
+                />
+                <motion.div 
+                  animate={{ rotate: -360 }}
+                  transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
+                  className="absolute inset-2 border-4 border-dashed border-oxford-blue/30 rounded-[2rem]"
+                />
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <ShieldCheck className="w-12 h-12 text-oxford-blue animate-pulse" />
                 </div>
-                <div className="relative z-10 flex flex-col md:flex-row items-center gap-8">
-                  <div className="w-32 h-32 bg-white/10 backdrop-blur-md rounded-[2rem] border border-white/20 flex flex-col items-center justify-center">
-                    <span className="text-4xl font-black">{userLevel}</span>
-                    <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-60">Level</span>
+              </div>
+              
+              <h2 className="text-3xl font-black text-oxford-blue mb-4 tracking-tight">
+                {processingStep === 1 ? 'Reading Document...' : 
+                 processingStep === 2 ? 'AI Analysis in Progress...' : 
+                 'Finalizing Insights...'}
+              </h2>
+              <p className="text-slate-500 font-medium mb-12">
+                Our advanced AI is decoding your medical report to provide clear, actionable insights.
+              </p>
+
+              <div className="w-full space-y-4">
+                {[
+                  { step: 1, label: 'Text Extraction', icon: FileText },
+                  { step: 2, label: 'Medical Entity Recognition', icon: Activity },
+                  { step: 3, label: 'Insight Synthesis', icon: Zap },
+                ].map((s) => (
+                  <div 
+                    key={s.step}
+                    className={cn(
+                      "flex items-center gap-4 p-4 rounded-2xl border transition-all duration-500",
+                      processingStep >= s.step ? "bg-white border-slate-100 shadow-sm" : "opacity-40 border-transparent"
+                    )}
+                  >
+                    <div className={cn(
+                      "w-10 h-10 rounded-xl flex items-center justify-center",
+                      processingStep >= s.step ? "bg-oxford-blue text-white" : "bg-slate-100 text-slate-400"
+                    )}>
+                      <s.icon className="w-5 h-5" />
+                    </div>
+                    <span className="font-black text-sm text-oxford-blue">{s.label}</span>
+                    {processingStep === s.step && (
+                      <motion.div 
+                        initial={{ width: 0 }}
+                        animate={{ width: '100%' }}
+                        className="flex-1 h-1 bg-slate-100 rounded-full ml-4 overflow-hidden"
+                      >
+                        <motion.div 
+                          animate={{ x: ['-100%', '100%'] }}
+                          transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
+                          className="w-1/2 h-full bg-oxford-blue"
+                        />
+                      </motion.div>
+                    )}
+                    {processingStep > s.step && (
+                      <div className="ml-auto text-green-500">
+                        <ShieldCheck className="w-5 h-5" />
+                      </div>
+                    )}
                   </div>
-                  <div className="flex-1 text-center md:text-left">
-                    <h2 className="text-3xl font-black mb-2">Your Wellness Journey</h2>
-                    <p className="text-slate-300 font-medium mb-6">Keep analyzing reports and exploring insights to level up your health literacy!</p>
-                    <div className="flex flex-wrap gap-3 justify-center md:justify-start">
-                      {Array.from(achievements).map((ach, i) => (
-                        <div key={i} className="flex items-center gap-2 px-3 py-1.5 bg-white/10 rounded-xl border border-white/10 text-[10px] font-black uppercase tracking-widest">
-                          <Award className="w-3 h-3 text-amber-400" />
-                          {ach}
+                ))}
+              </div>
+            </div>
+          ) : terms.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center p-6 text-center">
+              <div className="max-w-2xl w-full bg-white rounded-[3rem] shadow-2xl shadow-slate-200/50 p-12 border border-slate-100">
+                <div className="mb-8 flex justify-center">
+                  <div className="w-24 h-24 bg-slate-50 rounded-3xl flex items-center justify-center border border-slate-100 shadow-inner">
+                    <ShieldCheck className="w-12 h-12 text-oxford-blue" />
+                  </div>
+                </div>
+                <h2 className="text-4xl font-black text-oxford-blue mb-4 tracking-tight">Welcome to MediLens</h2>
+                <p className="text-lg text-slate-500 mb-12 max-w-md mx-auto leading-relaxed">
+                  Clinical Decision Support for medical reports. Upload a document to begin your analysis.
+                </p>
+                
+                {error && (
+                  <div className="mb-8 p-5 bg-red-50 border border-red-100 rounded-2xl flex items-center gap-4 text-red-700 text-sm animate-in fade-in slide-in-from-top-4">
+                    <div className="bg-red-100 p-2 rounded-lg">
+                      <AlertCircle className="w-5 h-5 shrink-0" />
+                    </div>
+                    <p className="font-semibold text-left flex-1">{error}</p>
+                    <button 
+                      onClick={() => setError(null)} 
+                      className="p-2 hover:bg-red-100 rounded-lg transition-colors"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                )}
+                
+                <div 
+                  className="border-2 border-dashed border-slate-200 rounded-[2rem] p-16 transition-all hover:border-oxford-blue hover:bg-slate-50 cursor-pointer group relative overflow-hidden"
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const file = e.dataTransfer.files[0];
+                    if (file) handleFileUpload(file);
+                  }}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <input 
+                    type="file" 
+                    ref={fileInputRef} 
+                    className="hidden" 
+                    accept=".pdf,.png,.jpg,.jpeg,.webp,.csv,.txt,.doc,.docx"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) handleFileUpload(file);
+                    }}
+                  />
+                  <div className="relative z-10">
+                    <div className="w-20 h-20 bg-oxford-blue rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-xl group-hover:scale-110 transition-transform duration-500">
+                      <Upload className="w-10 h-10 text-white" />
+                    </div>
+                    <p className="text-xl font-bold text-oxford-blue">Drop your report here</p>
+                    <p className="text-sm text-slate-400 mt-3 font-medium">Supports PDF, Images, CSV, Text, and Word docs</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <>
+              {/* Dashboard View */}
+              {activeStep === 'dashboard' && (
+            <div className="max-w-6xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+              {/* Game Mode Quests */}
+              {isGameMode && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="bg-gradient-to-br from-amber-400 to-orange-500 rounded-[2.5rem] p-8 shadow-xl shadow-amber-200/50 text-oxford-blue relative overflow-hidden group"
+                >
+                  <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:scale-110 transition-transform duration-700">
+                    <Gamepad2 className="w-48 h-48" />
+                  </div>
+                  <div className="relative z-10 flex flex-col md:flex-row items-center justify-between gap-8">
+                    <div className="space-y-4 text-center md:text-left">
+                      <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-white/30 rounded-full text-[10px] font-black uppercase tracking-widest backdrop-blur-sm">
+                        <Zap className="w-3 h-3 fill-current" />
+                        Active Health Quest
+                      </div>
+                      <h3 className="text-3xl font-black tracking-tight leading-none">The Insight Seeker</h3>
+                      <p className="text-sm font-bold opacity-80 max-w-md">
+                        Review all {terms.length} clinical findings to earn +50 Health XP and reach Level {userLevel + 1}!
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-6">
+                      <div className="text-center">
+                        <div className="text-4xl font-black tracking-tighter">50</div>
+                        <div className="text-[10px] font-black uppercase tracking-widest opacity-60">XP REWARD</div>
+                      </div>
+                      <div className="w-px h-12 bg-oxford-blue/10" />
+                      <button className="px-8 py-4 bg-oxford-blue text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg shadow-oxford-blue/20 hover:scale-105 transition-all">
+                        Start Quest
+                      </button>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+
+              {/* Executive Summary Card */}
+              {executiveSummary && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="bg-white rounded-[2.5rem] p-10 shadow-xl border border-slate-100 relative overflow-hidden"
+                >
+                  <div className="absolute top-0 right-0 p-10 opacity-5">
+                    <FileText className="w-40 h-40 text-oxford-blue" />
+                  </div>
+                  <div className="relative z-10">
+                    <div className="flex items-center gap-3 mb-8">
+                      <div className="w-12 h-12 bg-oxford-blue rounded-2xl flex items-center justify-center text-white shadow-lg shadow-oxford-blue/20">
+                        <Activity className="w-6 h-6" />
+                      </div>
+                      <div>
+                        <h3 className="text-2xl font-black text-oxford-blue tracking-tight">Executive Summary</h3>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Clinical Overview & Insights</p>
+                      </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
+                      <div className="lg:col-span-2 space-y-8">
+                        <div>
+                          <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-3">Overview</h4>
+                          <p className="text-lg text-slate-600 font-medium leading-relaxed">
+                            {executiveSummary.overview}
+                          </p>
+                        </div>
+                        
+                        <div>
+                          <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Key Findings</h4>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {executiveSummary.key_findings.map((finding, i) => (
+                              <div key={i} className="flex items-start gap-3 p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                                <div className="w-5 h-5 bg-oxford-blue rounded-full flex items-center justify-center text-white text-[10px] font-black shrink-0 mt-0.5">
+                                  {i + 1}
+                                </div>
+                                <p className="text-sm text-slate-600 font-bold leading-snug">{finding}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="bg-slate-50 rounded-3xl p-8 border border-slate-100 flex flex-col justify-between">
+                        <div>
+                          <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Clinical Outlook</h4>
+                          <p className="text-sm text-slate-600 font-bold leading-relaxed italic">
+                            "{executiveSummary.clinical_outlook}"
+                          </p>
+                        </div>
+                        <div className="mt-8 pt-8 border-t border-slate-200">
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-sm">
+                              <ShieldCheck className="w-5 h-5 text-oxford-blue" />
+                            </div>
+                            <p className="text-[10px] font-black text-oxford-blue uppercase tracking-widest leading-tight">
+                              AI-Powered Clinical <br /> Analysis Engine
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+
+              {/* Visual Severity Breakdown & Organ Map */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                <div className="space-y-8">
+                  <div className="bg-white rounded-[2.5rem] p-8 shadow-xl border border-slate-100">
+                    <h3 className="text-xl font-black text-oxford-blue tracking-tight mb-8">Severity Breakdown</h3>
+                    <div className="flex items-center justify-center h-64 relative">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={[
+                              { name: 'Critical', value: terms.filter(t => t.severity === 'Critical').length, color: '#EF4444' },
+                              { name: 'Concern', value: terms.filter(t => t.severity === 'Concern').length, color: '#F59E0B' },
+                              { name: 'Borderline', value: terms.filter(t => t.severity === 'Borderline').length, color: '#3B82F6' },
+                              { name: 'Normal', value: terms.filter(t => t.severity === 'Normal').length, color: '#10B981' },
+                            ].filter(d => d.value > 0)}
+                            innerRadius={60}
+                            outerRadius={80}
+                            paddingAngle={5}
+                            dataKey="value"
+                          >
+                            {[
+                              { name: 'Critical', color: '#EF4444' },
+                              { name: 'Concern', color: '#F59E0B' },
+                              { name: 'Borderline', color: '#3B82F6' },
+                              { name: 'Normal', color: '#10B981' },
+                            ].map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={entry.color} />
+                            ))}
+                          </Pie>
+                          <Tooltip />
+                        </PieChart>
+                      </ResponsiveContainer>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                        <span className="text-3xl font-black text-oxford-blue">{terms.length}</span>
+                        <span className="text-[8px] font-black text-slate-400 uppercase tracking-widest">Findings</span>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4 mt-8">
+                      {[
+                        { label: 'Critical', count: terms.filter(t => t.severity === 'Critical').length, color: 'bg-red-500', xp: 20 },
+                        { label: 'Concern', count: terms.filter(t => t.severity === 'Concern').length, color: 'bg-amber-500', xp: 15 },
+                        { label: 'Borderline', count: terms.filter(t => t.severity === 'Borderline').length, color: 'bg-blue-500', xp: 10 },
+                        { label: 'Normal', count: terms.filter(t => t.severity === 'Normal').length, color: 'bg-green-500', xp: 5 },
+                      ].map(s => (
+                        <div key={s.label} className="flex items-center justify-between p-3 bg-slate-50 rounded-2xl border border-slate-100 group relative">
+                          <div className="flex items-center gap-2">
+                            <div className={cn("w-2 h-2 rounded-full", s.color)} />
+                            <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">{s.label}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-black text-oxford-blue">{s.count}</span>
+                            {isGameMode && (
+                              <div className="hidden group-hover:flex absolute -top-2 -right-2 bg-amber-400 text-oxford-blue text-[8px] font-black px-1.5 py-0.5 rounded-full border border-white shadow-sm animate-bounce">
+                                +{s.xp} XP
+                              </div>
+                            )}
+                          </div>
                         </div>
                       ))}
                     </div>
                   </div>
-                  <div className="bg-white/5 p-6 rounded-3xl border border-white/10 min-w-[200px] text-center">
-                    <p className="text-[10px] font-black uppercase tracking-widest opacity-60 mb-2">Total XP</p>
-                    <p className="text-4xl font-black text-amber-400">{wellnessPoints}</p>
-                    <p className="text-[10px] font-bold text-slate-400 mt-2 uppercase tracking-widest">Top 5% of Users</p>
-                  </div>
-                </div>
-              </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                <div className="lg:col-span-1">
-                  <HealthScore score={healthScore} />
-                  <div className="mt-8">
-                    <WellnessBadges terms={terms} />
+                  {/* Top 3 Priority Findings */}
+                  <div className="bg-white rounded-[2.5rem] p-8 shadow-xl border border-slate-100">
+                    <h3 className="text-xl font-black text-oxford-blue tracking-tight mb-8">Priority Findings</h3>
+                    <div className="space-y-4">
+                      {terms
+                        .filter(t => t.severity === 'Critical' || t.severity === 'Concern')
+                        .slice(0, 3)
+                        .map((t, i) => (
+                          <div key={i} className="p-5 bg-slate-50 rounded-3xl border border-slate-100 flex items-start gap-4 group hover:bg-white hover:shadow-lg transition-all">
+                            <div className={cn(
+                              "w-10 h-10 rounded-xl flex items-center justify-center text-white shrink-0",
+                              t.severity === 'Critical' ? "bg-red-500" : "bg-amber-500"
+                            )}>
+                              <AlertTriangle className="w-5 h-5" />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2 mb-1">
+                                <h4 className="text-sm font-black text-oxford-blue uppercase tracking-tight">{t.term}</h4>
+                                <span className={cn(
+                                  "px-2 py-0.5 rounded-full text-[8px] font-black uppercase tracking-widest",
+                                  t.severity === 'Critical' ? "bg-red-100 text-red-600" : "bg-amber-100 text-amber-600"
+                                )}>
+                                  {t.severity}
+                                </span>
+                              </div>
+                              <p className="text-[10px] text-slate-500 font-bold leading-relaxed">
+                                {t.plain_english || "Clinical finding requiring medical attention and follow-up."}
+                              </p>
+                            </div>
+                          </div>
+                        ))}
+                      {terms.filter(t => t.severity === 'Critical' || t.severity === 'Concern').length === 0 && (
+                        <div className="h-full flex flex-col items-center justify-center text-center p-10">
+                          <CheckCircle2 className="w-12 h-12 text-green-500 mb-4 opacity-20" />
+                          <p className="text-xs font-black text-slate-300 uppercase tracking-widest">No Critical Findings</p>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
-                <div className="lg:col-span-2">
-                  <InsightCards terms={terms} />
-                </div>
-              </div>
 
-              {/* Quick Stats Grid */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                {[
-                  { label: 'Critical', count: terms.filter(t => t.severity === 'Critical').length, color: 'text-red-600', bg: 'bg-red-50' },
-                  { label: 'Concern', count: terms.filter(t => t.severity === 'Concern').length, color: 'text-red-400', bg: 'bg-red-50' },
-                  { label: 'Borderline', count: terms.filter(t => t.severity === 'Borderline').length, color: 'text-amber-600', bg: 'bg-amber-50' },
-                  { label: 'Normal', count: terms.filter(t => t.severity === 'Normal').length, color: 'text-green-600', bg: 'bg-green-50' },
-                ].map((stat, i) => (
-                  <div key={i} className={cn("p-6 rounded-[2rem] border border-white/20 shadow-sm", stat.bg)}>
-                    <p className="text-[10px] font-black uppercase tracking-widest opacity-60 mb-1">{stat.label}</p>
-                    <p className={cn("text-3xl font-black", stat.color)}>{stat.count}</p>
-                  </div>
-                ))}
+                <OrganMap 
+                  terms={terms} 
+                  selectedSystem={selectedSystem} 
+                  onFilterBySystem={setSelectedSystem} 
+                />
               </div>
 
               {/* Standard Deviation Analysis */}
@@ -851,11 +1097,488 @@ export default function App() {
                   </div>
                 </div>
               )}
+
+              {/* Structured Findings Table */}
+              {terms.length > 0 && (
+                <div className="animate-in fade-in slide-in-from-top-8 duration-700">
+                  <div className="flex items-center gap-3 mb-6">
+                    <div className="bg-oxford-blue p-2 rounded-xl shadow-lg shadow-oxford-blue/20">
+                      <ClipboardList className="w-4 h-4 text-white" />
+                    </div>
+                    <h3 className="text-sm font-black text-oxford-blue uppercase tracking-[0.2em]">Structured Clinical Findings</h3>
+                  </div>
+                  
+                  <div className="bg-white rounded-[2rem] border border-slate-100 shadow-sm overflow-hidden">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-100">
+                          <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Clinical Marker</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Category</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Result</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Trend</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Reference Range</th>
+                          <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Severity</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-50">
+                        {terms.map((term, i) => (
+                          <tr 
+                            key={i} 
+                            className="hover:bg-slate-50/50 transition-colors cursor-pointer group"
+                            onClick={() => {
+                              setActiveStep('insights');
+                              setTimeout(() => {
+                                const el = document.getElementById(`term-${term.term}`);
+                                if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                              }, 100);
+                            }}
+                          >
+                            <td className="px-6 py-5">
+                              <div className="flex items-center gap-3">
+                                <div className={cn("w-2 h-2 rounded-full", 
+                                  term.severity === 'Critical' ? "bg-red-600" : 
+                                  term.severity === 'Concern' ? "bg-red-400" : 
+                                  term.severity === 'Borderline' ? "bg-amber-500" : "bg-green-600"
+                                )} />
+                                <span className="font-bold text-oxford-blue group-hover:text-oxford-blue transition-colors">{term.term}</span>
+                              </div>
+                            </td>
+                            <td className="px-6 py-5">
+                              <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{term.category}</span>
+                            </td>
+                            <td className="px-6 py-5 text-center">
+                              {term.value !== null ? (
+                                <span className="font-mono font-black text-oxford-blue">{term.value} <span className="text-[10px] text-slate-400">{term.unit}</span></span>
+                              ) : (
+                                <span className="text-slate-300 font-bold">—</span>
+                              )}
+                            </td>
+                            <td className="px-6 py-5 text-center">
+                              {term.trend ? (
+                                <div className="flex flex-col items-center">
+                                  <span className={cn(
+                                    "text-[10px] font-black uppercase tracking-widest",
+                                    term.trend.toLowerCase().includes('improving') ? "text-green-600" :
+                                    term.trend.toLowerCase().includes('declining') ? "text-red-600" : "text-slate-400"
+                                  )}>
+                                    {term.trend}
+                                  </span>
+                                </div>
+                              ) : (
+                                <span className="text-slate-300 font-bold">—</span>
+                              )}
+                            </td>
+                            <td className="px-6 py-5 text-center">
+                              {term.reference_min !== null ? (
+                                <span className="text-xs font-bold text-slate-500">{term.reference_min} – {term.reference_max}</span>
+                              ) : (
+                                <span className="text-slate-300 font-bold">—</span>
+                              )}
+                            </td>
+                            <td className="px-6 py-5 text-right">
+                              <span className={cn(
+                                "px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border",
+                                term.severity === 'Critical' ? "bg-red-50 text-red-700 border-red-100" : 
+                                term.severity === 'Concern' ? "bg-red-50 text-red-600 border-red-100" : 
+                                term.severity === 'Borderline' ? "bg-amber-50 text-amber-700 border-amber-100" : "bg-green-50 text-green-700 border-green-100"
+                              )}>
+                                {term.severity}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* Quick Stats Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                {[
+                  { label: 'Critical', count: terms.filter(t => t.severity === 'Critical').length, color: 'text-red-600', bg: 'bg-red-50' },
+                  { label: 'Concern', count: terms.filter(t => t.severity === 'Concern').length, color: 'text-red-400', bg: 'bg-red-50' },
+                  { label: 'Borderline', count: terms.filter(t => t.severity === 'Borderline').length, color: 'text-amber-600', bg: 'bg-amber-50' },
+                  { label: 'Normal', count: terms.filter(t => t.severity === 'Normal').length, color: 'text-green-600', bg: 'bg-green-50' },
+                ].map((stat, i) => (
+                  <div key={i} className={cn("p-6 rounded-[2rem] border border-white/20 shadow-sm", stat.bg)}>
+                    <p className="text-[10px] font-black uppercase tracking-widest opacity-60 mb-1">{stat.label}</p>
+                    <p className={cn("text-3xl font-black", stat.color)}>{stat.count}</p>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
 
+          {/* History View */}
+          {activeStep === 'history' && (
+            <PastReports 
+              reports={pastReports} 
+              onDelete={(id) => setPastReports(prev => prev.filter(r => r.id !== id))}
+              onSelect={(report) => {
+                setTerms(report.terms);
+                setOriginalText(report.fullText);
+                setVitalityIndex(report.vitalityIndex);
+                setExecutiveSummary(report.summary);
+                setAiInsights(report.aiInsights);
+                setActiveStep('summary');
+              }}
+            />
+          )}
+
+          {/* Settings View */}
+          {activeStep === 'settings' && (
+            <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+              <div className="flex items-center gap-4 mb-8">
+                <div className="bg-oxford-blue p-3 rounded-2xl shadow-lg shadow-oxford-blue/20">
+                  <SettingsIcon className="w-6 h-6 text-white" />
+                </div>
+                <div className="flex-1">
+                  <h2 className="text-3xl font-black text-oxford-blue tracking-tight">Settings</h2>
+                  <p className="text-slate-400 font-medium">Customize your health experience</p>
+                </div>
+                <button 
+                  onClick={() => setActiveStep('dashboard')}
+                  className="px-6 py-3 bg-white border border-slate-100 rounded-xl font-black text-[10px] uppercase tracking-widest text-slate-400 hover:text-oxford-blue hover:shadow-sm transition-all"
+                >
+                  Back to Dashboard
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                <div className="md:col-span-1 space-y-4">
+                  <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm">
+                    <div className="flex flex-col items-center text-center">
+                      <div className="w-24 h-24 bg-oxford-blue rounded-3xl flex items-center justify-center text-white font-black text-3xl mb-4 shadow-xl shadow-oxford-blue/20 overflow-hidden">
+                        {user?.photo ? (
+                          <img src={user.photo} alt={user.fullName} className="w-full h-full object-cover" />
+                        ) : (
+                          user?.fullName.charAt(0)
+                        )}
+                      </div>
+                      <h3 className="font-black text-oxford-blue text-lg">{user?.fullName}</h3>
+                      <p className="text-xs text-slate-400 font-bold uppercase tracking-widest mt-1">{user?.email}</p>
+                      <div className="mt-4 px-4 py-1.5 bg-amber-400 text-oxford-blue text-[10px] font-black rounded-full uppercase tracking-widest">
+                        Level {userLevel} Health Pioneer
+                      </div>
+                    </div>
+                  </div>
+
+                  <nav className="space-y-2">
+                    {[
+                      { id: 'general', label: 'General', icon: SettingsIcon },
+                      { id: 'profile', label: 'Profile', icon: User },
+                      { id: 'notifications', label: 'Notifications', icon: Bell },
+                      { id: 'security', label: 'Security', icon: Shield },
+                      { id: 'appearance', label: 'Appearance', icon: Palette },
+                    ].map((item) => (
+                      <button 
+                        key={item.id}
+                        onClick={() => setSettingsTab(item.id as any)}
+                        className={cn(
+                          "w-full flex items-center gap-3 px-6 py-4 rounded-2xl font-bold transition-all text-sm",
+                          settingsTab === item.id 
+                            ? "bg-oxford-blue text-white shadow-lg shadow-oxford-blue/20" 
+                            : "text-slate-400 hover:bg-white hover:text-oxford-blue hover:shadow-sm"
+                        )}
+                      >
+                        <item.icon className="w-5 h-5" />
+                        {item.label}
+                      </button>
+                    ))}
+                  </nav>
+                </div>
+
+                <div className="md:col-span-2 space-y-6">
+                  {settingsTab === 'general' && (
+                    <>
+                      <div className="bg-white rounded-[2.5rem] p-8 shadow-xl border border-slate-100">
+                        <h3 className="text-xl font-black text-oxford-blue tracking-tight mb-6">General Preferences</h3>
+                        
+                        <div className="space-y-6">
+                          <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                            <div>
+                              <p className="font-black text-oxford-blue text-sm">Game Mode</p>
+                              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">Enable gamified health tracking</p>
+                            </div>
+                            <button 
+                              onClick={() => setIsGameMode(!isGameMode)}
+                              className={cn(
+                                "w-12 h-6 rounded-full transition-all relative",
+                                isGameMode ? "bg-oxford-blue" : "bg-slate-200"
+                              )}
+                            >
+                              <motion.div 
+                                animate={{ x: isGameMode ? 24 : 4 }}
+                                className="absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm"
+                              />
+                            </button>
+                          </div>
+
+                          <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                            <div>
+                              <p className="font-black text-oxford-blue text-sm">AI Analysis Depth</p>
+                              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">Level of clinical detail in reports</p>
+                            </div>
+                            <select className="bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-oxford-blue outline-none focus:ring-2 focus:ring-oxford-blue/20">
+                              <option>Standard</option>
+                              <option>Deep Analysis</option>
+                              <option>Physician Level</option>
+                            </select>
+                          </div>
+
+                          <div className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                            <div>
+                              <p className="font-black text-oxford-blue text-sm">Language</p>
+                              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">Interface and report language</p>
+                            </div>
+                            <select 
+                              value={selectedLanguage}
+                              onChange={(e) => setSelectedLanguage(e.target.value)}
+                              className="bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-bold text-oxford-blue outline-none focus:ring-2 focus:ring-oxford-blue/20"
+                            >
+                              <option>English</option>
+                              <option>Spanish</option>
+                              <option>French</option>
+                              <option>German</option>
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="bg-white rounded-[2.5rem] p-8 shadow-xl border border-slate-100">
+                        <h3 className="text-xl font-black text-oxford-blue tracking-tight mb-6">Privacy & Data</h3>
+                        <div className="space-y-4">
+                          <p className="text-xs text-slate-500 leading-relaxed font-medium">
+                            Your medical data is processed using advanced AI. We do not store your reports permanently unless you save them to your history. All processing is encrypted and HIPAA-compliant.
+                          </p>
+                          <div className="flex gap-4">
+                            <button className="px-6 py-3 bg-slate-100 text-slate-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-slate-200 transition-all">
+                              Export Data
+                            </button>
+                            <button className="px-6 py-3 bg-red-50 text-red-600 rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-red-100 transition-all">
+                              Delete Account
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {settingsTab === 'profile' && (
+                    <div className="bg-white rounded-[2.5rem] p-8 shadow-xl border border-slate-100 animate-in fade-in slide-in-from-right-4 duration-300">
+                      <h3 className="text-xl font-black text-oxford-blue tracking-tight mb-6">Profile Settings</h3>
+                      <div className="space-y-6">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Full Name</label>
+                            <input 
+                              type="text" 
+                              defaultValue={user?.fullName}
+                              className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-3 text-sm font-bold text-oxford-blue focus:ring-2 focus:ring-oxford-blue/20 outline-none transition-all"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Email Address</label>
+                            <input 
+                              type="email" 
+                              defaultValue={user?.email}
+                              disabled
+                              className="w-full bg-slate-100 border border-slate-100 rounded-2xl px-5 py-3 text-sm font-bold text-slate-400 cursor-not-allowed"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Date of Birth</label>
+                            <input 
+                              type="date" 
+                              className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-3 text-sm font-bold text-oxford-blue focus:ring-2 focus:ring-oxford-blue/20 outline-none transition-all"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Blood Type</label>
+                            <select className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-3 text-sm font-bold text-oxford-blue focus:ring-2 focus:ring-oxford-blue/20 outline-none transition-all">
+                              <option>A+</option>
+                              <option>A-</option>
+                              <option>B+</option>
+                              <option>B-</option>
+                              <option>O+</option>
+                              <option>O-</option>
+                              <option>AB+</option>
+                              <option>AB-</option>
+                            </select>
+                          </div>
+                        </div>
+                        <button className="px-8 py-4 bg-oxford-blue text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg shadow-oxford-blue/20 hover:scale-105 transition-all">
+                          Save Changes
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {settingsTab === 'notifications' && (
+                    <div className="bg-white rounded-[2.5rem] p-8 shadow-xl border border-slate-100 animate-in fade-in slide-in-from-right-4 duration-300">
+                      <h3 className="text-xl font-black text-oxford-blue tracking-tight mb-6">Notification Preferences</h3>
+                      <div className="space-y-4">
+                        {[
+                          { id: 'email', label: 'Email Notifications', desc: 'Receive report summaries via email' },
+                          { id: 'push', label: 'Push Notifications', desc: 'Get instant alerts on your device' },
+                          { id: 'reports', label: 'Report Ready Alerts', desc: 'Notify when AI analysis is complete' },
+                          { id: 'medications', label: 'Medication Reminders', desc: 'Alerts for scheduled doses' },
+                        ].map((pref) => (
+                          <div key={pref.id} className="flex items-center justify-between p-5 bg-slate-50 rounded-3xl border border-slate-100">
+                            <div>
+                              <p className="font-black text-oxford-blue text-sm">{pref.label}</p>
+                              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">{pref.desc}</p>
+                            </div>
+                            <button 
+                              onClick={() => setNotificationSettings(prev => ({ ...prev, [pref.id]: !prev[pref.id as keyof typeof prev] }))}
+                              className={cn(
+                                "w-12 h-6 rounded-full transition-all relative",
+                                notificationSettings[pref.id as keyof typeof notificationSettings] ? "bg-oxford-blue" : "bg-slate-200"
+                              )}
+                            >
+                              <motion.div 
+                                animate={{ x: notificationSettings[pref.id as keyof typeof notificationSettings] ? 24 : 4 }}
+                                className="absolute top-1 w-4 h-4 bg-white rounded-full shadow-sm"
+                              />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {settingsTab === 'security' && (
+                    <div className="bg-white rounded-[2.5rem] p-8 shadow-xl border border-slate-100 animate-in fade-in slide-in-from-right-4 duration-300">
+                      <h3 className="text-xl font-black text-oxford-blue tracking-tight mb-6">Security & Privacy</h3>
+                      <div className="space-y-8">
+                        <div className="space-y-4">
+                          <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Change Password</h4>
+                          <div className="space-y-4">
+                            <input 
+                              type="password" 
+                              placeholder="Current Password"
+                              className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-3 text-sm font-bold text-oxford-blue focus:ring-2 focus:ring-oxford-blue/20 outline-none transition-all"
+                            />
+                            <input 
+                              type="password" 
+                              placeholder="New Password"
+                              className="w-full bg-slate-50 border border-slate-100 rounded-2xl px-5 py-3 text-sm font-bold text-oxford-blue focus:ring-2 focus:ring-oxford-blue/20 outline-none transition-all"
+                            />
+                            <button className="px-8 py-4 bg-oxford-blue text-white rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg shadow-oxford-blue/20 hover:scale-105 transition-all">
+                              Update Password
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="pt-8 border-t border-slate-100">
+                          <div className="flex items-center justify-between p-5 bg-slate-50 rounded-3xl border border-slate-100">
+                            <div>
+                              <p className="font-black text-oxford-blue text-sm">Two-Factor Authentication</p>
+                              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest mt-0.5">Add an extra layer of security</p>
+                            </div>
+                            <button className="px-4 py-2 bg-white border border-slate-200 rounded-xl text-[10px] font-black uppercase tracking-widest text-oxford-blue hover:bg-slate-50 transition-all">
+                              Enable
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {settingsTab === 'appearance' && (
+                    <div className="bg-white rounded-[2.5rem] p-8 shadow-xl border border-slate-100 animate-in fade-in slide-in-from-right-4 duration-300">
+                      <h3 className="text-xl font-black text-oxford-blue tracking-tight mb-6">Appearance Settings</h3>
+                      <div className="space-y-8">
+                        <div className="space-y-4">
+                          <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Theme Mode</h4>
+                          <div className="grid grid-cols-3 gap-4">
+                            {[
+                              { id: 'light', label: 'Light', icon: Eye },
+                              { id: 'dark', label: 'Dark', icon: Moon },
+                              { id: 'system', label: 'System', icon: RefreshCw },
+                            ].map((theme) => (
+                              <button 
+                                key={theme.id}
+                                onClick={() => setAppearanceSettings(prev => ({ ...prev, theme: theme.id }))}
+                                className={cn(
+                                  "flex flex-col items-center gap-3 p-4 rounded-2xl border transition-all",
+                                  appearanceSettings.theme === theme.id 
+                                    ? "bg-oxford-blue border-oxford-blue text-white shadow-lg" 
+                                    : "bg-slate-50 border-slate-100 text-slate-400 hover:bg-white"
+                                )}
+                              >
+                                <theme.icon className="w-5 h-5" />
+                                <span className="text-[10px] font-black uppercase tracking-widest">{theme.label}</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="space-y-4 pt-8 border-t border-slate-100">
+                          <h4 className="text-xs font-black text-slate-400 uppercase tracking-widest ml-1">Accent Color</h4>
+                          <div className="flex gap-4">
+                            {['blue', 'emerald', 'violet', 'rose', 'amber'].map((color) => (
+                              <button 
+                                key={color}
+                                onClick={() => setAppearanceSettings(prev => ({ ...prev, accentColor: color }))}
+                                className={cn(
+                                  "w-10 h-10 rounded-full border-4 transition-all",
+                                  appearanceSettings.accentColor === color ? "border-oxford-blue scale-110" : "border-transparent",
+                                  color === 'blue' && "bg-blue-500",
+                                  color === 'emerald' && "bg-emerald-500",
+                                  color === 'violet' && "bg-violet-500",
+                                  color === 'rose' && "bg-rose-500",
+                                  color === 'amber' && "bg-amber-500"
+                                )}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Meds View */}
+          {activeStep === 'meds' && (
+            <MedicationTracker 
+              medications={medications}
+              onAdd={(med) => {
+                const newMed: Medication = {
+                  ...med,
+                  id: Date.now().toString(),
+                  adherence: {}
+                };
+                setMedications(prev => [...prev, newMed]);
+                addXp(50);
+              }}
+              onDelete={(id) => setMedications(prev => prev.filter(m => m.id !== id))}
+              onToggleAdherence={(id, date) => {
+                setMedications(prev => prev.map(m => {
+                  if (m.id === id) {
+                    const newAdherence = { ...m.adherence };
+                    newAdherence[date] = !newAdherence[date];
+                    if (newAdherence[date]) addXp(10);
+                    return { ...m, adherence: newAdherence };
+                  }
+                  return m;
+                }));
+              }}
+              onToggleReminders={(id) => {
+                setMedications(prev => prev.map(m => 
+                  m.id === id ? { ...m, reminders: !m.reminders } : m
+                ));
+              }}
+              terms={terms}
+            />
+          )}
+
           {/* Step Content */}
-          <div className="max-w-6xl mx-auto">
+          <div className="max-w-6xl mx-auto space-y-8">
             {activeStep === 'summary' && (
               <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
                 {/* Bento Grid Summary */}
@@ -1061,47 +1784,8 @@ export default function App() {
               </div>
             )}
 
-            <div className="max-w-6xl mx-auto">
-              {(activeStep === 'report' || activeStep === 'reports') && (
+            {(activeStep === 'report' || activeStep === 'reports') && (
               <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                {/* Executive Summary at the Beginning */}
-                <div className="bg-oxford-blue rounded-[2.5rem] p-10 text-white shadow-xl relative overflow-hidden">
-                  <div className="absolute top-0 right-0 p-10 opacity-5">
-                    <ClipboardList className="w-48 h-48" />
-                  </div>
-                  <div className="relative z-10">
-                    <h3 className="text-2xl font-black uppercase tracking-widest mb-6 flex items-center gap-3">
-                      <Zap className="w-6 h-6 text-amber-400" />
-                      Executive Clinical Summary
-                    </h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                      <div className="space-y-4">
-                        <p className="text-lg font-medium leading-relaxed text-slate-200">
-                          {executiveSummary || `Based on the clinical analysis of your report, we identified ${terms.length} medical markers. Your overall Vitality Index is ${healthScore}/100.`}
-                        </p>
-                        <div className="flex flex-wrap gap-2 pt-2">
-                          {terms.filter(t => t.severity === 'Critical').length > 0 && (
-                            <span className="px-3 py-1 bg-red-500/20 text-red-200 rounded-full text-[10px] font-black uppercase tracking-widest border border-red-500/30">
-                              {terms.filter(t => t.severity === 'Critical').length} Critical Flags
-                            </span>
-                          )}
-                          {terms.filter(t => t.severity === 'Concern').length > 0 && (
-                            <span className="px-3 py-1 bg-amber-500/20 text-amber-200 rounded-full text-[10px] font-black uppercase tracking-widest border border-amber-500/30">
-                              {terms.filter(t => t.severity === 'Concern').length} Concerns
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="bg-white/5 backdrop-blur-sm rounded-3xl p-6 border border-white/10">
-                        <h4 className="text-xs font-black uppercase tracking-widest mb-4 text-slate-400">Key Takeaway</h4>
-                        <p className="text-sm leading-relaxed text-slate-300 italic">
-                          "{terms.find(t => t.severity === 'Critical')?.suggestion || terms.find(t => t.severity === 'Concern')?.suggestion || "Your report shows mostly stable markers. Continue monitoring as advised by your healthcare provider."}"
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
                 {/* Original Report View */}
                 <div className="bg-white rounded-[2rem] shadow-xl shadow-slate-200/50 overflow-hidden border border-slate-100">
                   <div className="bg-slate-50 px-8 py-5 border-b border-slate-100 flex justify-between items-center">
@@ -1138,101 +1822,6 @@ export default function App() {
                         </div>
                       )}
                     </div>
-
-                    {/* Structured Findings Table */}
-                    {terms.length > 0 && (
-                      <div className="animate-in fade-in slide-in-from-top-8 duration-700">
-                        <div className="flex items-center gap-3 mb-6">
-                          <div className="bg-oxford-blue p-2 rounded-xl shadow-lg shadow-oxford-blue/20">
-                            <ClipboardList className="w-4 h-4 text-white" />
-                          </div>
-                          <h3 className="text-sm font-black text-oxford-blue uppercase tracking-[0.2em]">Structured Clinical Findings</h3>
-                        </div>
-                        
-                        <div className="bg-white rounded-[2rem] border border-slate-100 shadow-sm overflow-hidden">
-                          <table className="w-full text-left border-collapse">
-                            <thead>
-                              <tr className="bg-slate-50 border-b border-slate-100">
-                                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Clinical Marker</th>
-                                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest">Category</th>
-                                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Result</th>
-                                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Trend</th>
-                                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">Reference Range</th>
-                                <th className="px-6 py-4 text-[10px] font-black text-slate-400 uppercase tracking-widest text-right">Severity</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-50">
-                              {terms.map((term, i) => (
-                                <tr 
-                                  key={i} 
-                                  className="hover:bg-slate-50/50 transition-colors cursor-pointer group"
-                                  onClick={() => {
-                                    setActiveStep('insights');
-                                    setTimeout(() => {
-                                      const el = document.getElementById(`term-${term.term}`);
-                                      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                    }, 100);
-                                  }}
-                                >
-                                  <td className="px-6 py-5">
-                                    <div className="flex items-center gap-3">
-                                      <div className={cn("w-2 h-2 rounded-full", 
-                                        term.severity === 'Critical' ? "bg-red-600" : 
-                                        term.severity === 'Concern' ? "bg-red-400" : 
-                                        term.severity === 'Borderline' ? "bg-amber-500" : "bg-green-600"
-                                      )} />
-                                      <span className="font-bold text-oxford-blue group-hover:text-oxford-blue transition-colors">{term.term}</span>
-                                    </div>
-                                  </td>
-                                  <td className="px-6 py-5">
-                                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">{term.category}</span>
-                                  </td>
-                                  <td className="px-6 py-5 text-center">
-                                    {term.value !== null ? (
-                                      <span className="font-mono font-black text-oxford-blue">{term.value} <span className="text-[10px] text-slate-400">{term.unit}</span></span>
-                                    ) : (
-                                      <span className="text-slate-300 font-bold">—</span>
-                                    )}
-                                  </td>
-                                  <td className="px-6 py-5 text-center">
-                                    {term.trend ? (
-                                      <div className="flex flex-col items-center">
-                                        <span className={cn(
-                                          "text-[10px] font-black uppercase tracking-widest",
-                                          term.trend.toLowerCase().includes('improving') ? "text-green-600" :
-                                          term.trend.toLowerCase().includes('declining') ? "text-red-600" : "text-slate-400"
-                                        )}>
-                                          {term.trend}
-                                        </span>
-                                      </div>
-                                    ) : (
-                                      <span className="text-slate-300 font-bold">—</span>
-                                    )}
-                                  </td>
-                                  <td className="px-6 py-5 text-center">
-                                    {term.reference_min !== null ? (
-                                      <span className="text-xs font-bold text-slate-500">{term.reference_min} – {term.reference_max}</span>
-                                    ) : (
-                                      <span className="text-slate-300 font-bold">—</span>
-                                    )}
-                                  </td>
-                                  <td className="px-6 py-5 text-right">
-                                    <span className={cn(
-                                      "px-3 py-1 rounded-full text-[9px] font-black uppercase tracking-widest border",
-                                      term.severity === 'Critical' ? "bg-red-50 text-red-700 border-red-100" : 
-                                      term.severity === 'Concern' ? "bg-red-50 text-red-600 border-red-100" : 
-                                      term.severity === 'Borderline' ? "bg-amber-50 text-amber-700 border-amber-100" : "bg-green-50 text-green-700 border-green-100"
-                                    )}>
-                                      {term.severity}
-                                    </span>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    )}
 
                     <div className="mt-8 flex items-center gap-4 text-[10px] text-slate-500 font-bold uppercase tracking-widest bg-slate-50 p-4 rounded-2xl border border-slate-100">
                       <Info className="w-4 h-4 text-oxford-blue" />
@@ -1470,33 +2059,118 @@ export default function App() {
 
             {activeStep === 'physician' && (
               <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                {/* AI Insights Header Card */}
                 <div className="bg-slate-900 rounded-[2.5rem] p-12 text-white shadow-2xl relative overflow-hidden">
                   <div className="absolute top-0 right-0 p-12 opacity-[0.03] pointer-events-none">
-                    <Stethoscope className="w-96 h-96" />
+                    <Zap className="w-96 h-96" />
                   </div>
                   <div className="relative z-10">
                     <div className="flex items-center justify-between mb-10">
                       <div className="flex items-center gap-4">
                         <div className="bg-white/10 p-3 rounded-2xl backdrop-blur-md border border-white/20">
-                          <Stethoscope className="w-8 h-8 text-white" />
+                          <Zap className="w-8 h-8 text-white" />
                         </div>
                         <div>
-                          <h3 className="text-3xl font-black uppercase tracking-widest">Physician Brief</h3>
-                          <p className="text-white/50 text-xs font-bold uppercase tracking-[0.3em] mt-1">Clinical Intelligence Report (SBAR Format)</p>
+                          <h3 className="text-3xl font-black uppercase tracking-widest">AI Insights</h3>
+                          <p className="text-white/50 text-xs font-bold uppercase tracking-[0.3em] mt-1">Deep Clinical Analysis & Lifestyle Impact</p>
                         </div>
                       </div>
                       <div className="px-6 py-2 bg-white/5 rounded-full border border-white/10">
-                        <span className="text-[10px] font-black uppercase tracking-widest text-white/70">Confidential Clinical Data</span>
+                        <span className="text-[10px] font-black uppercase tracking-widest text-white/70">Confidential AI Analysis</span>
                       </div>
                     </div>
 
-                    <div className="prose prose-invert max-w-none">
-                      <div className="bg-white/5 rounded-3xl p-10 border border-white/10 font-mono text-sm leading-relaxed whitespace-pre-wrap text-slate-300">
-                        {physicianBrief || "No physician brief generated for this report."}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+                      {/* SBAR Brief */}
+                      <div className="space-y-6">
+                        <div className="flex items-center gap-2 text-amber-400">
+                          <Stethoscope className="w-4 h-4" />
+                          <h4 className="text-[10px] font-black uppercase tracking-widest">Clinical SBAR Brief</h4>
+                        </div>
+                        <div className="bg-white/5 rounded-3xl p-8 border border-white/10 font-mono text-sm leading-relaxed whitespace-pre-wrap text-slate-300">
+                          {aiInsights?.sbar_brief || "No clinical brief generated."}
+                        </div>
+                      </div>
+
+                      {/* Lifestyle & Trends */}
+                      <div className="space-y-8">
+                        <div className="bg-white/5 rounded-3xl p-8 border border-white/10">
+                          <div className="flex items-center gap-2 text-blue-400 mb-4">
+                            <Apple className="w-4 h-4" />
+                            <h4 className="text-[10px] font-black uppercase tracking-widest">Lifestyle Impact</h4>
+                          </div>
+                          <p className="text-sm text-slate-300 leading-relaxed">
+                            {aiInsights?.lifestyle_impact || "No lifestyle insights available."}
+                          </p>
+                        </div>
+
+                        <div className="bg-white/5 rounded-3xl p-8 border border-white/10">
+                          <div className="flex items-center gap-2 text-purple-400 mb-4">
+                            <Activity className="w-4 h-4" />
+                            <h4 className="text-[10px] font-black uppercase tracking-widest">Trend Analysis</h4>
+                          </div>
+                          <p className="text-sm text-slate-300 leading-relaxed">
+                            {aiInsights?.trend_analysis || "No trend analysis available."}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-10 grid grid-cols-1 md:grid-cols-3 gap-6">
+                      {/* Nutritional Guidance */}
+                      <div className="bg-white/5 rounded-3xl p-6 border border-white/10">
+                        <div className="flex items-center gap-2 text-green-400 mb-4">
+                          <Apple className="w-4 h-4" />
+                          <h4 className="text-[10px] font-black uppercase tracking-widest">Nutritional Guidance</h4>
+                        </div>
+                        <p className="text-xs text-slate-300 leading-relaxed">
+                          {aiInsights?.nutritional_guidance || "No nutritional advice available."}
+                        </p>
+                      </div>
+
+                      {/* Activity Recommendations */}
+                      <div className="bg-white/5 rounded-3xl p-6 border border-white/10">
+                        <div className="flex items-center gap-2 text-orange-400 mb-4">
+                          <Activity className="w-4 h-4" />
+                          <h4 className="text-[10px] font-black uppercase tracking-widest">Activity Recommendations</h4>
+                        </div>
+                        <p className="text-xs text-slate-300 leading-relaxed">
+                          {aiInsights?.activity_recommendations || "No activity suggestions available."}
+                        </p>
+                      </div>
+
+                      {/* Mental Health Check */}
+                      <div className="bg-white/5 rounded-3xl p-6 border border-white/10">
+                        <div className="flex items-center gap-2 text-pink-400 mb-4">
+                          <ShieldCheck className="w-4 h-4" />
+                          <h4 className="text-[10px] font-black uppercase tracking-widest">Mental Health Check</h4>
+                        </div>
+                        <p className="text-xs text-slate-300 leading-relaxed">
+                          {aiInsights?.mental_health_check || "No mental health considerations available."}
+                        </p>
                       </div>
                     </div>
 
                     <div className="mt-12 grid grid-cols-1 md:grid-cols-2 gap-8">
+                      {/* Urgent Actions */}
+                      <div className="bg-red-500/10 rounded-3xl p-8 border border-red-500/20">
+                        <h4 className="text-xs font-black uppercase tracking-widest mb-6 text-red-400 flex items-center gap-2">
+                          <AlertTriangle className="w-4 h-4" />
+                          Urgent Next Steps
+                        </h4>
+                        <div className="space-y-3">
+                          {aiInsights?.urgent_actions && aiInsights.urgent_actions.length > 0 ? aiInsights.urgent_actions.map((action, i) => (
+                            <div key={i} className="flex gap-3 items-start">
+                              <div className="w-1.5 h-1.5 rounded-full bg-red-400 mt-1.5 shrink-0" />
+                              <p className="text-sm font-bold text-red-200/80">{action}</p>
+                            </div>
+                          )) : (
+                            <p className="text-sm text-slate-500 italic">No urgent actions required.</p>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Clinical Questions */}
                       <div className="bg-white/5 rounded-3xl p-8 border border-white/10">
                         <h4 className="text-xs font-black uppercase tracking-widest mb-6 text-white/40 flex items-center gap-2">
                           <Activity className="w-4 h-4" />
@@ -1511,26 +2185,6 @@ export default function App() {
                           )) : (
                             <p className="text-sm text-slate-500 italic">No specific questions generated.</p>
                           )}
-                        </div>
-                      </div>
-                      <div className="bg-white/5 rounded-3xl p-8 border border-white/10">
-                        <h4 className="text-xs font-black uppercase tracking-widest mb-6 text-white/40 flex items-center gap-2">
-                          <ShieldCheck className="w-4 h-4" />
-                          Risk Assessment
-                        </h4>
-                        <div className="space-y-6">
-                          <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/5">
-                            <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Vitality Index</span>
-                            <span className="text-2xl font-black text-white">{vitalityIndex}/100</span>
-                          </div>
-                          <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/5">
-                            <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Critical Markers</span>
-                            <span className="text-2xl font-black text-red-500">{terms.filter(t => t.severity === 'Critical').length}</span>
-                          </div>
-                          <div className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/5">
-                            <span className="text-xs font-bold text-slate-400 uppercase tracking-widest">Concerns</span>
-                            <span className="text-2xl font-black text-amber-500">{terms.filter(t => t.severity === 'Concern').length}</span>
-                          </div>
                         </div>
                       </div>
                     </div>
@@ -1659,9 +2313,10 @@ export default function App() {
               </div>
             )}
           </div>
-        </div>
-      </main>
-      </div>
+        </>
+      )}
+    </main>
+  </div>
 
       <footer className="fixed bottom-0 w-full bg-oxford-blue text-white text-center py-3 px-6 text-[10px] font-bold uppercase tracking-[0.2em] z-50 border-t border-white/10 backdrop-blur-md bg-oxford-blue/90">
         Clinical Decision Support Tool • For Educational Use Only • Consult a Licensed Physician
@@ -1704,6 +2359,89 @@ export default function App() {
           }
         }
       `}</style>
+      {/* Logout Confirmation Modal */}
+      <AnimatePresence>
+        {showLogoutConfirm && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6">
+            <motion.div 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowLogoutConfirm(false)}
+              className="absolute inset-0 bg-oxford-blue/20 backdrop-blur-sm"
+            />
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="relative bg-white rounded-[2.5rem] p-10 shadow-2xl border border-slate-100 max-w-md w-full text-center"
+            >
+              <div className="w-20 h-20 bg-red-50 rounded-3xl flex items-center justify-center mx-auto mb-6">
+                <LogOut className="w-10 h-10 text-red-500" />
+              </div>
+              <h3 className="text-2xl font-black text-oxford-blue tracking-tight mb-3">Sign Out?</h3>
+              <p className="text-slate-500 font-medium mb-8 leading-relaxed">
+                Are you sure you want to sign out? You'll need to sign back in to access your health data.
+              </p>
+              <div className="flex gap-4">
+                <button 
+                  onClick={() => setShowLogoutConfirm(false)}
+                  className="flex-1 px-6 py-4 rounded-2xl font-black text-sm text-slate-400 hover:bg-slate-50 transition-all"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={() => {
+                    setShowLogoutConfirm(false);
+                    logout();
+                  }}
+                  className="flex-1 px-6 py-4 rounded-2xl bg-red-500 text-white font-black text-sm shadow-xl shadow-red-500/20 hover:scale-[1.02] active:scale-[0.98] transition-all"
+                >
+                  Sign Out
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppRouter />
+    </AuthProvider>
+  );
+}
+
+function AppRouter() {
+  const { isAuthenticated } = useAuth();
+  
+  return (
+    <AnimatePresence mode="wait">
+      {!isAuthenticated ? (
+        <motion.div
+          key="auth"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.5 }}
+        >
+          <AuthPage />
+        </motion.div>
+      ) : (
+        <motion.div
+          key="app"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.5 }}
+        >
+          <MainApp />
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 }
